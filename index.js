@@ -1,11 +1,14 @@
 const express = require("express");
-const cors = require('cors');
-const dotenv = require('dotenv');
-const moongoose = require('mongoose');
-const bodyParser = require('body-parser');
-const rateLimit = require('express-rate-limit'); // Rate Limiting
-// const { createProxyMiddleware } = require('http-proxy-middleware'); // Reverse Proxy
+const cors = require("cors");
+const dotenv = require("dotenv");
+const mongoose = require("mongoose");
+const bodyParser = require("body-parser");
+const rateLimit = require("express-rate-limit");
+const cluster = require("cluster");
+const os = require("os");
+const { initializeRedis } = require("./route/redisClient");
 
+// Routes
 const userRoute = require("./route/user");
 const blogRoute = require("./route/blog");
 const ebookRoute = require("./route/ebook");
@@ -14,67 +17,90 @@ const cartRoute = require("./route/cart");
 const recipeRoute = require("./route/recipe");
 const paystackPayment = require("./route/payment");
 
-// const targetServer = 'http://localhost:5000';
-
-const app = express();
 dotenv.config();
-// Create a rate limiter
-const limiter = rateLimit({
-    windowMs: 15 * 6 * 1000, // 15 minutes
-    max: 100, // limit each ip to 100 request per windowMs
-    message: 'Too many request, try again after 15 minutes'
-    // message: `${alert('Too many request, try again after 15min')}`
-});
+const app = express();
 
-// Use limiter
-app.use(limiter);
+// Redis Client Initialization
+initializeRedis().then((redisClient) => {
+  // Optionally: You can store `redisClient` in a global variable if needed across routes
+  app.locals.redisClient = redisClient;
 
-// proxy middleware
-// app.use('/api', createProxyMiddleware({
-//     target: targetServer,
-//     changeOrigin: true,
-//     pathRewrite: {
-//         "^/api": '',
-//     }
-// }));
+  // Clustering for Multi-Core Usage
+  if (cluster.isMaster) {
+    const numCPUs = os.cpus().length;
+    console.log(`Master cluster setting up ${numCPUs} workers...`);
 
-
-const allowedOrigins = ['http://localhost:3000', 'https://titoscorner.vercel.app', 'https://titoscorneradmin.vercel.app'];
-
-app.use(cors({
-  origin: function (origin, callback) {
-    // Check if the incoming origin is in the allowed origins array
-    if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
+    // Fork workers
+    for (let i = 0; i < numCPUs; i++) {
+      cluster.fork();
     }
+
+    // When a worker dies, fork a new one
+    cluster.on("exit", (worker, code, signal) => {
+      console.log(`Worker ${worker.process.pid} died`);
+    });
+  } else {
+    // Worker processes have to listen to the port
+    const PORT = process.env.PORT || 5000;
+
+    // Rate Limiter Configuration
+    const limiter = rateLimit({
+      windowMs: 15 * 60 * 1000, // 15 minutes
+      max: 100,
+      message: "Too many requests, try again after 15 minutes",
+    });
+
+    app.use(limiter);
+
+    // CORS Configuration
+    const allowedOrigins = [
+      "http://localhost:3000",
+      "https://titoscorner.vercel.app",
+      "https://titoscorneradmin.vercel.app",
+    ];
+
+    app.use(
+      cors({
+        origin: (origin, callback) => {
+          if (allowedOrigins.includes(origin) || !origin) {
+            callback(null, true);
+          } else {
+            callback(new Error("Not allowed by CORS"));
+          }
+        },
+      })
+    );
+
+    // Middleware
+    app.use(express.json());
+    app.use(bodyParser.json());
+    app.use(bodyParser.urlencoded({ extended: true }));
+
+    // MongoDB Connection
+    mongoose
+      .connect(process.env.MONGODB_API)
+      .then(() => console.log("MongoDB Connected Successfully"))
+      .catch((err) => console.error("MongoDB Connection Error:", err));
+
+    // Test Route
+    app.get("/test", (req, res) => {
+      res.send("Welcome to the backend world");
+    });
+
+    // API Routes
+    app.use("/api/users", userRoute);
+    app.use("/api/blogs", blogRoute);
+    app.use("/api/books", ebookRoute);
+    app.use("/api/podcast", podcastRoute);
+    app.use("/api/cart", cartRoute);
+    app.use("/api/recipe", recipeRoute);
+    app.use("/api/checkout", paystackPayment);
+
+    // Start Server
+    app.listen(PORT, () => {
+      console.log(`Worker ${process.pid} started, Server listening on port ${PORT}`);
+    });
   }
-}));
-
-app.use(express.json());
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
-
-
-
-moongoose
-    .connect(process.env.MONGODB_API)
-    .then((console.log("DBCOnnected Successfully")));
-    // .catch();
- 
-app.get('/test', (req, res) => {
-    res.send('Welcome to backend world');
-});
-app.use("/api/users", userRoute);
-app.use("/api/blogs", blogRoute);
-app.use("/api/books", ebookRoute);
-app.use("/api/podcast", podcastRoute);
-app.use("/api/cart", cartRoute);
-app.use("/api/recipe", recipeRoute);
-app.use("/api/checkout", paystackPayment);
-
-
-app.listen(5000, () => {
-    console.log(`Server is running`);
+}).catch((err) => {
+  console.error("Redis initialization failed:", err);
 });

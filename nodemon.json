@@ -1,0 +1,7 @@
+{
+    "watch": ["index.js", "route", "Model", "controllers"],
+    "ignore": ["node_modules", "public", "logs"],
+    "execMap": {
+      "js": "node --inspect index.js"
+    }
+}
