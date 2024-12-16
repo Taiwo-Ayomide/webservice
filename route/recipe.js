@@ -76,8 +76,9 @@ router.get("/", async (req, res) => {
     try {
         const redisClient = await initializeRedis();
 
-        // Check if recipes are cached in Redis
-        const cachedRecipes = await redisClient.get('recipes');
+        // Check if recipes for this page are cached in Redis
+        const cacheKey = `recipes_page_${page}`;
+        const cachedRecipes = await redisClient.get(cacheKey);
         if (cachedRecipes) {
             console.log("Recipes fetched from cache:", cachedRecipes);  // Log cache hit
             return res.status(200).json(JSON.parse(cachedRecipes)); // Return cached recipes
@@ -91,15 +92,17 @@ router.get("/", async (req, res) => {
             .limit(limit); // Limit number of recipes per page
         const totalRecipes = await Recipe.countDocuments(); // Total number of recipes
 
-        res.status(200).json({
+        const response = {
             recipes,
             totalRecipes,
             totalPages: Math.ceil(totalRecipes / limit),
             currentPage: page
-        });
+        };
 
-        // Cache recipes for future use
-        await redisClient.set('recipes', JSON.stringify({ recipes, totalRecipes, totalPages: Math.ceil(totalRecipes / limit), currentPage: page }), 'EX', 3600);
+        res.status(200).json(response);
+
+        // Cache the recipes for this page
+        await redisClient.set(cacheKey, JSON.stringify(response), 'EX', 3600); // Cache for 1 hour
         console.log("Recipes cached in Redis:", recipes);  // Log what is being cached
 
     } catch (error) {
