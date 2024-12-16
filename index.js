@@ -55,7 +55,7 @@ initializeRedis().then((redisClient) => {
     // CORS Configuration
     const allowedOrigins = [
       "http://localhost:3000",
-      "https://titoscorner.vercel.app",
+      "https://titoscornerbrand.vercel.app",
       "https://titoscorneradmin.vercel.app",
     ];
 
