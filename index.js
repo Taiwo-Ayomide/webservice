@@ -5,6 +5,7 @@ const mongoose = require("mongoose");
 const bodyParser = require("body-parser");
 const rateLimit = require("express-rate-limit");
 const cluster = require("cluster");
+const promClient = require('prom-client');
 const os = require("os");
 const { initializeRedis } = require("./route/redisClient");
 
@@ -19,6 +20,35 @@ const paystackPayment = require("./route/payment");
 
 dotenv.config();
 const app = express();
+
+
+// Create a Registry to hold your metrics
+const register = new promClient.Registry();
+
+
+// Create a metric to track HTTP request counts
+const httpRequestCounter = new promClient.Counter({
+  name: 'http_requests_total',
+  help: 'Total number of HTTP requests',
+  labelNames: ['method', 'status'],
+});
+
+// Register the metric
+register.registerMetric(httpRequestCounter);
+
+
+// Expose the /metrics endpoint that Prometheus will scrape
+app.get('/metrics', async (req, res) => {
+  res.set('Content-Type', register.contentType);
+  res.end(await register.metrics());
+});
+
+// Example route that increments the counter
+app.get('/', (req, res) => {
+  httpRequestCounter.inc({ method: 'GET', status: 200 });
+  res.send('Hello, Prometheus!');
+});
+
 
 // Redis Client Initialization
 initializeRedis().then((redisClient) => {
